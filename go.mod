@@ -10,9 +10,12 @@ require (
 	github.com/docker/go-units v0.4.0
 	github.com/gorilla/websocket v1.4.0
 	github.com/imdario/mergo v0.3.6
+	github.com/json-iterator/go v1.1.9
 	github.com/mafredri/cdp v0.21.0
 	github.com/pborman/uuid v0.0.0-20170612153648-e790cca94e6c
 	github.com/pkg/errors v0.8.1
-	golang.org/x/net v0.0.0-20190311183353-d8887717615a
-	gopkg.in/yaml.v2 v2.2.2 // indirect
+	github.com/spf13/viper v1.6.2
+	golang.org/x/net v0.0.0-20190522155817-f3200d17e092
 )
+
+go 1.13

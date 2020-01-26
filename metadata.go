@@ -3,9 +3,9 @@
 package main
 
 import (
-	"encoding/json"
 	"github.com/aerokube/selenoid/event"
 	"github.com/aerokube/selenoid/session"
+	json "github.com/json-iterator/go"
 	"io/ioutil"
 	"log"
 	"path/filepath"

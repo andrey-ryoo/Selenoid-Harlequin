@@ -2,8 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"flag"
+	json "github.com/json-iterator/go"
 	"log"
 	"net"
 	"net/http"
@@ -30,6 +29,8 @@ import (
 	"github.com/aerokube/util"
 	"github.com/aerokube/util/docker"
 	"github.com/docker/docker/client"
+	"github.com/spf13/viper"
+	_ "github.com/spf13/viper/remote"
 )
 
 var (
@@ -55,7 +56,10 @@ var (
 	videoOutputDir           string
 	videoRecorderImage       string
 	logOutputDir             string
+	ggrHostEnv               string
 	saveAllLogs              bool
+	configuration            *viper.Viper
+	consulAddr, consulPath   string
 	ggrHost                  *ggr.Host
 	conf                     *config.Config
 	queue                    *protect.Queue
@@ -64,51 +68,85 @@ var (
 
 	startTime = time.Now()
 
-	version     bool
 	gitRevision = "HEAD"
 	buildStamp  = "unknown"
 )
 
 func init() {
-	var mem service.MemLimit
-	var cpu service.CpuLimit
-	flag.BoolVar(&disableDocker, "disable-docker", false, "Disable docker support")
-	flag.BoolVar(&disableQueue, "disable-queue", false, "Disable wait queue")
-	flag.BoolVar(&enableFileUpload, "enable-file-upload", false, "File upload support")
-	flag.StringVar(&listen, "listen", ":4444", "Network address to accept connections")
-	flag.StringVar(&confPath, "conf", "config/browsers.json", "Browsers configuration file")
-	flag.StringVar(&logConfPath, "log-conf", "", "Container logging configuration file")
-	flag.IntVar(&limit, "limit", 5, "Simultaneous container runs")
-	flag.IntVar(&retryCount, "retry-count", 1, "New session attempts retry count")
-	flag.DurationVar(&timeout, "timeout", 60*time.Second, "Session idle timeout in time.Duration format")
-	flag.DurationVar(&maxTimeout, "max-timeout", 1*time.Hour, "Maximum valid session idle timeout in time.Duration format")
-	flag.DurationVar(&newSessionAttemptTimeout, "session-attempt-timeout", 30*time.Second, "New session attempt timeout in time.Duration format")
-	flag.DurationVar(&sessionDeleteTimeout, "session-delete-timeout", 30*time.Second, "Session delete timeout in time.Duration format")
-	flag.DurationVar(&serviceStartupTimeout, "service-startup-timeout", 30*time.Second, "Service startup timeout in time.Duration format")
-	flag.BoolVar(&version, "version", false, "Show version and exit")
-	flag.Var(&mem, "mem", "Containers memory limit e.g. 128m or 1g")
-	flag.Var(&cpu, "cpu", "Containers cpu limit as float e.g. 0.2 or 1.0")
-	flag.StringVar(&containerNetwork, "container-network", service.DefaultContainerNetwork, "Network to be used for containers")
-	flag.BoolVar(&captureDriverLogs, "capture-driver-logs", false, "Whether to add driver process logs to Selenoid output")
-	flag.BoolVar(&disablePrivileged, "disable-privileged", false, "Whether to disable privileged container mode")
-	flag.StringVar(&videoOutputDir, "video-output-dir", "video", "Directory to save recorded video to")
-	flag.StringVar(&videoRecorderImage, "video-recorder-image", "selenoid/video-recorder:latest-release", "Image to use as video recorder")
-	flag.StringVar(&logOutputDir, "log-output-dir", "", "Directory to save session log to")
-	flag.BoolVar(&saveAllLogs, "save-all-logs", false, "Whether to save all logs without considering capabilities")
-	flag.DurationVar(&gracefulPeriod, "graceful-period", 300*time.Second, "graceful shutdown period in time.Duration format, e.g. 300s or 500ms")
-	flag.Parse()
 
-	if version {
-		showVersion()
-		os.Exit(0)
+	configuration = viper.New()
+	consulAddr = os.Getenv("CONSUL_URL")
+	consulPath = os.Getenv("CONSUL_PATH")
+
+	if consulAddr == "" {
+		configuration.SetConfigName("config")
+		configuration.SetConfigType("yaml")
+		configuration.AddConfigPath(".")
+		err := configuration.ReadInConfig()
+		if err != nil {
+			log.Fatalf("Failed reading config: %v", err)
+		}
+	} else {
+		err := configuration.AddRemoteProvider("consul", consulAddr, consulPath)
+		if err != nil {
+			log.Fatalf("Failed configuring consul connection: %v", err)
+		}
+		configuration.SetConfigType("yaml")
+		err = configuration.ReadRemoteConfig()
+		if err != nil {
+			log.Fatalf("Failed connecting to consul: %v", err)
+		}
 	}
+
+	go func() {
+		for {
+			time.Sleep(time.Second * 30)
+			if consulAddr == "" {
+				err := configuration.ReadInConfig()
+				if err != nil {
+					log.Fatalf("Failed reading config: %v", err)
+				}
+			} else {
+				err := configuration.ReadRemoteConfig()
+				if err != nil {
+					log.Printf("unable to read remote config: %v", err)
+					continue
+				}
+			}
+		}
+	}()
+
+	disableDocker = configuration.GetBool("selenoid.disable-docker")
+	disableQueue = configuration.GetBool("selenoid.disable-queue")
+	enableFileUpload = configuration.GetBool("selenoid.enable-file-upload")
+	listen = configuration.GetString("selenoid.listen")
+	confPath = configuration.GetString("selenoid.conf")
+	logConfPath = configuration.GetString("selenoid.log-conf")
+	if configuration.GetBool("selenoid.limit-auto") {
+		limit = configuration.GetInt("selenoid.limit")
+	}
+	retryCount = configuration.GetInt("selenoid.retry-count")
+	timeout = time.Second * configuration.GetDuration("selenoid.timeout")
+	maxTimeout = time.Hour * configuration.GetDuration("selenoid.max-timeout")
+	newSessionAttemptTimeout = time.Second * configuration.GetDuration("selenoid.session-attempt-timeout")
+	sessionDeleteTimeout = time.Second * configuration.GetDuration("selenoid.session-delete-timeout")
+	serviceStartupTimeout = time.Second * configuration.GetDuration("selenoid.service-startup-timeout")
+	containerNetwork = configuration.GetString("selenoid.container-network")
+	captureDriverLogs = configuration.GetBool("selenoid.captureDriverLogs")
+	disablePrivileged = configuration.GetBool("selenoid.disable-privileged")
+	videoOutputDir = configuration.GetString("selenoid.video-output-dir")
+	videoRecorderImage = configuration.GetString("selenoid.video-recorder-image")
+	logOutputDir = configuration.GetString("selenoid.log-output-dir")
+	ggrHostEnv = configuration.GetString("selenoid.ggr-host")
+	saveAllLogs = configuration.GetBool("selenoid.save-all-logs")
+	gracefulPeriod = time.Second * configuration.GetDuration("selenoid.graceful-period")
 
 	var err error
 	hostname, err = os.Hostname()
 	if err != nil {
 		log.Fatalf("[-] [INIT] [%s: %v]", os.Args[0], err)
 	}
-	if ggrHostEnv := os.Getenv("GGR_HOST"); ggrHostEnv != "" {
+	if ggrHostEnv != "" {
 		ggrHost = parseGgrHost(ggrHostEnv)
 	}
 	queue = protect.New(limit, disableQueue)
@@ -159,8 +197,8 @@ func init() {
 
 	environment := service.Environment{
 		InDocker:             inDocker,
-		CPU:                  int64(cpu),
-		Memory:               int64(mem),
+		CPU:                  configuration.GetInt64("selenoid.cpu"),
+		Memory:               configuration.GetInt64("selenoid.mem"),
 		Network:              containerNetwork,
 		StartupTimeout:       serviceStartupTimeout,
 		SessionDeleteTimeout: sessionDeleteTimeout,

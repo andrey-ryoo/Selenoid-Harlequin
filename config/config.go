@@ -3,8 +3,8 @@ package config
 import (
 	"log"
 
-	"encoding/json"
 	"fmt"
+	json "github.com/json-iterator/go"
 	"io/ioutil"
 	"strings"
 	"sync"
