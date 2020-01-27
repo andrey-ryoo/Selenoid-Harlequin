@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/spf13/viper"
 	"log"
 
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"time"
 )
+
+var Configuration *viper.Viper
 
 // Session - session id and vnc flag
 type Session struct {

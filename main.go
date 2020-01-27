@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -58,7 +59,6 @@ var (
 	logOutputDir             string
 	ggrHostEnv               string
 	saveAllLogs              bool
-	configuration            *viper.Viper
 	consulAddr, consulPath   string
 	ggrHost                  *ggr.Host
 	conf                     *config.Config
@@ -74,40 +74,41 @@ var (
 
 func init() {
 
-	configuration = viper.New()
+	config.Configuration = viper.New()
 	consulAddr = os.Getenv("CONSUL_URL")
 	consulPath = os.Getenv("CONSUL_PATH")
 
 	if consulAddr == "" {
-		configuration.SetConfigName("config")
-		configuration.SetConfigType("yaml")
-		configuration.AddConfigPath(".")
-		err := configuration.ReadInConfig()
+		log.Println("[-] [INIT] [Loading configuration from local config...]")
+		config.Configuration.SetConfigName("config")
+		config.Configuration.SetConfigType("yaml")
+		config.Configuration.AddConfigPath(".")
+		err := config.Configuration.ReadInConfig()
 		if err != nil {
 			log.Fatalf("Failed reading config: %v", err)
 		}
 	} else {
-		err := configuration.AddRemoteProvider("consul", consulAddr, consulPath)
+		log.Println("[-] [INIT] [Loading configuration from Consul...]")
+		err := config.Configuration.AddRemoteProvider("consul", consulAddr, consulPath)
 		if err != nil {
 			log.Fatalf("Failed configuring consul connection: %v", err)
 		}
-		configuration.SetConfigType("yaml")
-		err = configuration.ReadRemoteConfig()
+		config.Configuration.SetConfigType("yaml")
+		err = config.Configuration.ReadRemoteConfig()
 		if err != nil {
 			log.Fatalf("Failed connecting to consul: %v", err)
 		}
 	}
-
 	go func() {
 		for {
 			time.Sleep(time.Second * 30)
 			if consulAddr == "" {
-				err := configuration.ReadInConfig()
+				err := config.Configuration.ReadInConfig()
 				if err != nil {
 					log.Fatalf("Failed reading config: %v", err)
 				}
 			} else {
-				err := configuration.ReadRemoteConfig()
+				err := config.Configuration.ReadRemoteConfig()
 				if err != nil {
 					log.Printf("unable to read remote config: %v", err)
 					continue
@@ -116,30 +117,56 @@ func init() {
 		}
 	}()
 
-	disableDocker = configuration.GetBool("selenoid.disable-docker")
-	disableQueue = configuration.GetBool("selenoid.disable-queue")
-	enableFileUpload = configuration.GetBool("selenoid.enable-file-upload")
-	listen = configuration.GetString("selenoid.listen")
-	confPath = configuration.GetString("selenoid.conf")
-	logConfPath = configuration.GetString("selenoid.log-conf")
-	if configuration.GetBool("selenoid.limit-auto") {
-		limit = configuration.GetInt("selenoid.limit")
+	disableDocker = config.Configuration.GetBool("selenoid.disable-docker")
+	log.Printf("[-] [INIT] [Docker is Disabled] [%v]", disableDocker)
+	disableQueue = config.Configuration.GetBool("selenoid.disable-queue")
+	log.Printf("[-] [INIT] [Queues are Disabled] [%v]", disableQueue)
+	enableFileUpload = config.Configuration.GetBool("selenoid.enable-file-upload")
+	log.Printf("[-] [INIT] [File uploads from Selenoid node are Enabled] [%v]", enableFileUpload)
+	listen = config.Configuration.GetString("selenoid.listen")
+	log.Printf("[-] [INIT] [Selenoid is listening] [0.0.0.0%s]", listen)
+	confPath = config.Configuration.GetString("selenoid.browsers-config")
+	log.Printf("[-] [INIT] [Browser configuration is located @] [%s]", confPath)
+	logConfPath = config.Configuration.GetString("selenoid.log-conf")
+	log.Printf("[-] [INIT] [Logs configuration is located @] [%s]", logConfPath)
+	if config.Configuration.GetBool("selenoid.limit-auto") {
+		log.Println("[-] [INIT] [Automatic limit estimator Engaged]")
+		limit = runtime.NumCPU() * 2
+		log.Printf("[-] [INIT] [Selenoid is capable providing %d browsers]", limit)
+	} else {
+		limit = config.Configuration.GetInt("selenoid.limit")
+		log.Printf("[-] [INIT] [Selenoid is set to provide %d browsers]", limit)
 	}
-	retryCount = configuration.GetInt("selenoid.retry-count")
-	timeout = time.Second * configuration.GetDuration("selenoid.timeout")
-	maxTimeout = time.Hour * configuration.GetDuration("selenoid.max-timeout")
-	newSessionAttemptTimeout = time.Second * configuration.GetDuration("selenoid.session-attempt-timeout")
-	sessionDeleteTimeout = time.Second * configuration.GetDuration("selenoid.session-delete-timeout")
-	serviceStartupTimeout = time.Second * configuration.GetDuration("selenoid.service-startup-timeout")
-	containerNetwork = configuration.GetString("selenoid.container-network")
-	captureDriverLogs = configuration.GetBool("selenoid.captureDriverLogs")
-	disablePrivileged = configuration.GetBool("selenoid.disable-privileged")
-	videoOutputDir = configuration.GetString("selenoid.video-output-dir")
-	videoRecorderImage = configuration.GetString("selenoid.video-recorder-image")
-	logOutputDir = configuration.GetString("selenoid.log-output-dir")
-	ggrHostEnv = configuration.GetString("selenoid.ggr-host")
-	saveAllLogs = configuration.GetBool("selenoid.save-all-logs")
-	gracefulPeriod = time.Second * configuration.GetDuration("selenoid.graceful-period")
+	retryCount = config.Configuration.GetInt("selenoid.retry-count")
+	log.Printf("[-] [INIT] [Selenoid retry count is: %d]", retryCount)
+	timeout = time.Second * config.Configuration.GetDuration("selenoid.timeout")
+	log.Printf("[-] [INIT] [Selenoid timeout is: %d seconds]", timeout/time.Second)
+	maxTimeout = time.Hour * config.Configuration.GetDuration("selenoid.max-timeout")
+	log.Printf("[-] [INIT] [Selenoid max timeout is: %d hours]", maxTimeout/time.Hour)
+	newSessionAttemptTimeout = time.Second * config.Configuration.GetDuration("selenoid.session-attempt-timeout")
+	log.Printf("[-] [INIT] [Selenoid Session Attempt timeout is: %d seconds]", newSessionAttemptTimeout/time.Second)
+	sessionDeleteTimeout = time.Second * config.Configuration.GetDuration("selenoid.session-delete-timeout")
+	log.Printf("[-] [INIT] [Selenoid Session Delete timeout is: %d seconds]", sessionDeleteTimeout/time.Second)
+	serviceStartupTimeout = time.Second * config.Configuration.GetDuration("selenoid.service-startup-timeout")
+	log.Printf("[-] [INIT] [Selenoid Service Startup timeout is: %d seconds]", serviceStartupTimeout/time.Second)
+	containerNetwork = config.Configuration.GetString("selenoid.container-network")
+	log.Printf("[-] [INIT] [Selenoid Container Network is: %s]", containerNetwork)
+	captureDriverLogs = config.Configuration.GetBool("selenoid.captureDriverLogs")
+	log.Printf("[-] [INIT] [Capture Driver Logs is Enabled] [%v]", captureDriverLogs)
+	disablePrivileged = config.Configuration.GetBool("selenoid.disable-privileged")
+	log.Printf("[-] [INIT] [Privilege mode is Disabled] [%v]", disablePrivileged)
+	videoOutputDir = config.Configuration.GetString("selenoid.video-output-dir")
+	log.Printf("[-] [INIT] [Video output directory is located @: %s]", videoOutputDir)
+	videoRecorderImage = config.Configuration.GetString("selenoid.video-recorder-image")
+	log.Printf("[-] [INIT] [Video recorder image is located @: %s]", videoRecorderImage)
+	logOutputDir = config.Configuration.GetString("selenoid.log-output-dir")
+	log.Printf("[-] [INIT] [Selenoid Log output directory is located @: %s]", logOutputDir)
+	ggrHostEnv = config.Configuration.GetString("selenoid.ggr-host")
+	log.Printf("[-] [INIT] [GGR host is : %s]", ggrHostEnv)
+	saveAllLogs = config.Configuration.GetBool("selenoid.save-all-logs")
+	log.Printf("[-] [INIT] [All logs are Enabled] [%v]", saveAllLogs)
+	gracefulPeriod = time.Second * config.Configuration.GetDuration("selenoid.graceful-period")
+	log.Printf("[-] [INIT] [Graceful Period is: %d seconds]", serviceStartupTimeout/time.Second)
 
 	var err error
 	hostname, err = os.Hostname()
@@ -197,8 +224,8 @@ func init() {
 
 	environment := service.Environment{
 		InDocker:             inDocker,
-		CPU:                  configuration.GetInt64("selenoid.cpu"),
-		Memory:               configuration.GetInt64("selenoid.mem"),
+		CPU:                  config.Configuration.GetInt64("selenoid.cpu"),
+		Memory:               config.Configuration.GetInt64("selenoid.mem"),
 		Network:              containerNetwork,
 		StartupTimeout:       serviceStartupTimeout,
 		SessionDeleteTimeout: sessionDeleteTimeout,

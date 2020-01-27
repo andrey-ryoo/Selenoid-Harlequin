@@ -1,5 +1,5 @@
 selenoid:
-  listen: 4444
+  listen: ":4444"
   ggr-host: ""
   disable-docker: false
   disable-queue: false
@@ -12,7 +12,6 @@ selenoid:
   session-attempt-timeout: 30
   session-delete-timeout: 30
   service-startup-timeout: 30
-  limit: 5
   limit-auto: true
   cpu: 1
   mem: 512
