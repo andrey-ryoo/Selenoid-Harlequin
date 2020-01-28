@@ -5,7 +5,7 @@ selenoid:
   disable-queue: false
   enable-file-upload: false
   browsers-config: "config/browsers.json"
-  log-conf: ""
+  log-conf: "config/container-logs.json"
   retry-count: 1
   timeout: 60
   max-timeout: 1

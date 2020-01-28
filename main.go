@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/fsnotify/fsnotify"
 	json "github.com/json-iterator/go"
 	"log"
 	"net"
@@ -35,39 +36,38 @@ import (
 )
 
 var (
-	hostname                 string
-	disableDocker            bool
-	disableQueue             bool
-	enableFileUpload         bool
-	listen                   string
-	timeout                  time.Duration
-	maxTimeout               time.Duration
-	newSessionAttemptTimeout time.Duration
-	sessionDeleteTimeout     time.Duration
-	serviceStartupTimeout    time.Duration
-	gracefulPeriod           time.Duration
-	limit                    int
-	retryCount               int
-	containerNetwork         string
-	sessions                 = session.NewMap()
-	confPath                 string
-	logConfPath              string
-	captureDriverLogs        bool
-	disablePrivileged        bool
-	videoOutputDir           string
-	videoRecorderImage       string
-	logOutputDir             string
-	ggrHostEnv               string
-	saveAllLogs              bool
-	consulAddr, consulPath   string
-	ggrHost                  *ggr.Host
-	conf                     *config.Config
-	queue                    *protect.Queue
-	manager                  service.Manager
-	cli                      *client.Client
+	hostname                           string
+	disableDocker                      bool
+	disableQueue                       bool
+	enableFileUpload                   bool
+	listen                             string
+	timeout                            time.Duration
+	maxTimeout                         time.Duration
+	newSessionAttemptTimeout           time.Duration
+	sessionDeleteTimeout               time.Duration
+	serviceStartupTimeout              time.Duration
+	gracefulPeriod                     time.Duration
+	limit                              int
+	retryCount                         int
+	containerNetwork                   string
+	confPath                           string
+	logConfPath                        string
+	captureDriverLogs                  bool
+	disablePrivileged                  bool
+	videoOutputDir                     string
+	videoRecorderImage                 string
+	logOutputDir                       string
+	ggrHostEnv                         string
+	saveAllLogs                        bool
+	consulAddr, consulPath, consulRoot string
+	ggrHost                            *ggr.Host
+	conf                               *config.Config
+	queue                              *protect.Queue
+	manager                            service.Manager
+	cli                                *client.Client
 
-	startTime = time.Now()
-
+	sessions    = session.NewMap()
+	startTime   = time.Now()
 	gitRevision = "HEAD"
 	buildStamp  = "unknown"
 )
@@ -75,8 +75,9 @@ var (
 func init() {
 
 	config.Configuration = viper.New()
-	consulAddr = os.Getenv("CONSUL_URL")
-	consulPath = os.Getenv("CONSUL_PATH")
+	consulAddr = os.Getenv("CONSUL_URL")  // localhost:8500
+	consulPath = os.Getenv("CONSUL_PATH") // selenoid.config.yaml
+	consulRoot = os.Getenv("CONSUL_ROOT") // harlequin (prefix)
 
 	if consulAddr == "" {
 		log.Println("[-] [INIT] [Loading configuration from local config...]")
@@ -89,7 +90,7 @@ func init() {
 		}
 	} else {
 		log.Println("[-] [INIT] [Loading configuration from Consul...]")
-		err := config.Configuration.AddRemoteProvider("consul", consulAddr, consulPath)
+		err := config.Configuration.AddRemoteProvider("consul", consulAddr, consulRoot+"/"+consulPath)
 		if err != nil {
 			log.Fatalf("Failed configuring consul connection: %v", err)
 		}
@@ -178,16 +179,34 @@ func init() {
 	}
 	queue = protect.New(limit, disableQueue)
 	conf = config.NewConfig()
-	err = conf.Load(confPath, logConfPath)
-	if err != nil {
-		log.Fatalf("[-] [INIT] [%s: %v]", os.Args[0], err)
-	}
-	onSIGHUP(func() {
-		err := conf.Load(confPath, logConfPath)
+	if consulAddr != "" {
+		err = conf.LoadFromRemote()
 		if err != nil {
-			log.Printf("[-] [INIT] [%s: %v]", os.Args[0], err)
+			log.Fatalf("[-] [INIT] [%s: %v]", os.Args[0], err)
 		}
-	})
+		config.Configuration.OnConfigChange(
+			func(e fsnotify.Event) {
+				log.Println("Config file changed:", e.Name)
+				err := conf.LoadFromRemote()
+				if err != nil {
+					log.Printf("[-] [INIT] [%s: %v]", os.Args[0], err)
+				}
+			})
+	} else {
+		err = conf.LoadFromLocalFS(confPath, logConfPath)
+		if err != nil {
+			log.Fatalf("[-] [INIT] [%s: %v]", os.Args[0], err)
+		}
+		config.Configuration.OnConfigChange(
+			func(e fsnotify.Event) {
+				log.Println("Config file changed:", e.Name)
+				err := conf.LoadFromLocalFS(confPath, logConfPath)
+				if err != nil {
+					log.Printf("[-] [INIT] [%s: %v]", os.Args[0], err)
+				}
+			})
+	}
+
 	inDocker := false
 	_, err = os.Stat("/.dockerenv")
 	if err == nil {
@@ -285,17 +304,6 @@ func parseGgrHost(s string) *ggr.Host {
 	}
 	log.Printf("[-] [INIT] [Will prefix all session IDs with a hash-sum: %s]", host.Sum())
 	return host
-}
-
-func onSIGHUP(fn func()) {
-	sig := make(chan os.Signal)
-	signal.Notify(sig, syscall.SIGHUP)
-	go func() {
-		for {
-			<-sig
-			fn()
-		}
-	}()
 }
 
 var seleniumPaths = struct {

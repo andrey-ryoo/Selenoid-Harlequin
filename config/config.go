@@ -3,6 +3,7 @@ package config
 import (
 	"github.com/spf13/viper"
 	"log"
+	"os"
 
 	"fmt"
 	json "github.com/json-iterator/go"
@@ -12,10 +13,28 @@ import (
 
 	"github.com/aerokube/selenoid/session"
 	"github.com/docker/docker/api/types/container"
+	"github.com/hashicorp/consul/api"
 	"time"
 )
 
-var Configuration *viper.Viper
+var (
+	Configuration *viper.Viper
+	KV            *api.KV
+)
+
+func init() {
+	if os.Getenv("CONSUL_URL") != "" {
+		log.Println("[-] [INIT] [Initializing Consul KV..]")
+		consulConfig := api.Config{
+			Address: os.Getenv("CONSUL_URL"),
+		}
+		consul, err := api.NewClient(&consulConfig)
+		if err != nil {
+			log.Panicf("[-] [INIT] [Failed starting consul client] [%v]", err)
+		}
+		KV = consul.KV()
+	}
+}
 
 // Session - session id and vnc flag
 type Session struct {
@@ -99,7 +118,7 @@ func loadJSON(filename string, v interface{}) error {
 }
 
 // Load loads config from file
-func (config *Config) Load(browsers, containerLogs string) error {
+func (config *Config) LoadFromLocalFS(browsers, containerLogs string) error {
 	log.Println("[-] [INIT] [Loading configuration files...]")
 	br := make(map[string]Versions)
 	err := loadJSON(browsers, &br)
@@ -114,6 +133,31 @@ func (config *Config) Load(browsers, containerLogs string) error {
 			return fmt.Errorf("log config: %v", err)
 		}
 		log.Printf("[-] [INIT] [Loaded log configuration from %s]", containerLogs)
+	}
+	config.lock.Lock()
+	defer config.lock.Unlock()
+	config.Browsers, config.ContainerLogs = br, cl
+	config.LastReloadTime = time.Now()
+	return nil
+}
+
+func (config *Config) LoadFromRemote() error {
+	log.Println("[-] [INIT] [Loading configuration files from Remote...]")
+	br := make(map[string]Versions)
+	browsers, _, _ := KV.Get(os.Getenv("CONSUL_ROOT")+"/"+Configuration.GetString("selenoid.browsers-config"), nil)
+	err := json.Unmarshal(browsers.Value, &br)
+	if err != nil {
+		return fmt.Errorf("parsing error: %v", err)
+	}
+	log.Println("[-] [INIT] [Loaded configuration from Remote]")
+	cl := &container.LogConfig{}
+	if Configuration.GetString("selenoid.log-conf") != "" {
+		logs, _, _ := KV.Get(os.Getenv("CONSUL_ROOT")+"/"+Configuration.GetString("selenoid.log-conf"), nil)
+		err := json.Unmarshal(logs.Value, &cl)
+		if err != nil {
+			return fmt.Errorf("parsing error: %v", err)
+		}
+		log.Println("[-] [INIT] [Loaded log configuration from Remote]")
 	}
 	config.lock.Lock()
 	defer config.lock.Unlock()
